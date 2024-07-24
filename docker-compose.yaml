@@ -1,0 +1,54 @@
+services:
+
+  broker1:
+    image: confluentinc/cp-server:${CP_TAG}
+    hostname: broker1
+    container_name: broker1
+    ports:
+      - "39094:39094"
+    restart: always
+    environment:
+      KAFKA_LISTENERS: BROKER://broker1:9092,EXTERNAL://broker1:39094,CONTROLLER://broker1:9093
+      KAFKA_ADVERTISED_LISTENERS: BROKER://broker1:9092,EXTERNAL://broker1:39094
+      KAFKA_INTER_BROKER_LISTENER_NAME: BROKER
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,BROKER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_PROCESS_ROLES: 'controller,broker'
+      KAFKA_NODE_ID: 1
+      KAFKA_BROKER_ID: 1
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@broker1:9093'
+      KAFKA_METADATA_LOG_SEGMENT_MS: 15000
+      KAFKA_METADATA_MAX_RETENTION_MS: 1200000
+      KAFKA_METADATA_LOG_MAX_RECORD_BYTES_BETWEEN_SNAPSHOTS: 2800
+      KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
+      CLUSTER_ID: 'ZWe3nnZwTrKSM0aM2doAxQ'
+
+  restproxy:
+    image: confluentinc/cp-kafka-rest:${CP_TAG}
+    hostname: restproxy
+    container_name: restproxy
+    ports: 
+      - 8082:8082
+    restart: always
+    depends_on:
+      - broker1
+      - schema-registry
+    environment:
+      KAFKA_REST_BOOTSTRAP_SERVERS: broker1:9092
+      KAFKA_REST_LISTENERS: http://0.0.0.0:8082
+      KAFKA_REST_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:${CP_TAG}
+    hostname: schema-registry
+    container_name: schema-registry
+    ports:
+      - '8081:8081'
+    restart: always
+    depends_on:
+      - broker1
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: broker1:9092
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
