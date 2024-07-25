@@ -285,8 +285,6 @@ curl -sS http://localhost:8082/v3/clusters/ZWe3nnZwTrKSM0aM2doAxQ/topics/test-to
 
 curl -sS http://localhost:8082/v3/clusters/ZWe3nnZwTrKSM0aM2doAxQ/topics/test-topic3/configs
 
-
-
 ### Create multiple topics
 
 Let's provision a few topics within a loop (note that there are many ways to do this - this example is a simple bash shell loop):
@@ -313,11 +311,94 @@ curl -sS http://localhost:8082/v3/clusters/ZWe3nnZwTrKSM0aM2doAxQ/topics | jq -r
 
 ## Finding single points of failure in topic configurations
 
-You'd honestly be surprised at the number of support incidents that get created due to topics that are configured without High Availability in mind (`"replication_factor": 3` --config min.insync.replicas=2)
+You'd honestly be surprised at the number of support incidents that get created due to topics that are configured without High Availability in mind (`"replication_factor": 3` and `"min.insync.replicas" : 2`), so can we use ReST Proxy to identify those?
+
+```bash
+curl -sS http://localhost:8082/v3/clusters/ZWe3nnZwTrKSM0aM2doAxQ/topics | jq -r ".data[] | select(.replication_factor == 1).topic_name"
+```
+
+Hopefully this gives you some ideas around how you can use ReST Proxy to manage topics.  As a note, you can also do the same work with ACLs - and we can review how these are handled in a future session if there is interest in doing so.
+
+## Producing to a topic
+
+So we've created and explored topics; let's write some data using the Produce API.  We can start with the simplest invocation:
+
+```bash
+curl -sS -X POST -H "Content-Type: application/json" --data '{"value": {"type": "JSON", "data": {"one": "two", "three": "four"}}}' "http://localhost:8082/v3/clusters/ZWe3nnZwTrKSM0aM2doAxQ/topics/test-topic/records" | jq 
+```
+
+You'll see that a JSON response is returned:
+
+```json
+{
+  "error_code": 200,
+  "cluster_id": "ZWe3nnZwTrKSM0aM2doAxQ",
+  "topic_name": "test-topic",
+  "partition_id": 0,
+  "offset": 3,
+  "timestamp": "2024-07-25T08:54:41.903Z",
+  "value": {
+    "type": "JSON",
+    "size": 28
+  }
+}
+```
+
+We can use `jq` to filter for specifics in the resultset as the HTTP response is returned to our client.
+
+Here we will just return the value of the `error_code` property:
+
+```bash
+curl -sS -X POST -H "Content-Type: application/json" --data '{"value": {"type": "JSON", "data": {"one": "two", "three": "four"}}}' "http://localhost:8082/v3/clusters/ZWe3nnZwTrKSM0aM2doAxQ/topics/test-topic/records" | jq -r ".error_code"
+```
+
+And here we can get the offset:
+
+```bash
+curl -sS -X POST -H "Content-Type: application/json" --data '{"value": {"type": "JSON", "data": {"one": "two", "three": "four"}}}' "http://localhost:8082/v3/clusters/ZWe3nnZwTrKSM0aM2doAxQ/topics/test-topic/records" | jq -r ".offset"
+```
+
+We should be able to only return the HTTP Error Code if it's not `200`:
+
+```bash
+curl -sS -m 5 -X POST -H "Content-Type: application/json" --data '{"value": {"type": "JSON", "data": {"one": "two", "three": "four"}}}' "http://localhost:8082/v3/clusters/ZWe3nnZwTrKSM0aM2doAxQ/topics/test-topic/records" | jq -r ". | select(.error_code == 200 | not)"
+```
+
+For now I can confirm that the logic works by returning the JSON response if it's not 500 - and we can see the HTTP response does come back to the Client:
+
+```bash
+curl -sS -m 5 -X POST -H "Content-Type: application/json" --data '{"value": {"type": "JSON", "data": {"one": "two", "three": "four"}}}' "http://localhost:8082/v3/clusters/ZWe3nnZwTrKSM0aM2doAxQ/topics/test-topic/records" | jq -r ". | select(.error_code == 500 | not)"
+```
+
+Fail faster with `-m nn`:
+
+```bash
+curl -sS -m 5 -X POST -H "Content-Type: application/json" --data '{"value": {"type": "JSON", "data": {"one": "two", "three": "four"}}}' "http://localhost:8082/v3/clusters/ZWe3nnZwTrKSM0aM2doAxQ/topics/test-topic/records" | jq -r ". | select(.error_code == 200 | not)"
+```
+
+That's just producing single records though - the main advantage of the `/records` endpoint is that it allows you to stream records to it.
 
 
 
 
+
+curl -sS http://localhost:8082/v3/clusters/ZWe3nnZwTrKSM0aM2doAxQ/topics | jq -r ".data[].error_code"
+
+
+-r ".data[] | select(.replication_factor == 1).topic_name"
+v2
+
+```
+curl -X POST \
+     -H "Content-Type: application/vnd.kafka.json.v2+json" \
+     -H "Accept: application/vnd.kafka.v2+json" \
+     --data '{"records":[
+{"key":"alice","value":{"count":0}},
+{"key":"alice","value":{"count":1}},
+{"key":"alice","value":{"count":2}}
+]}' \
+     "http://localhost:8082/topics/testtopic" | jq .
+```
 
 
 
@@ -327,6 +408,9 @@ You'd honestly be surprised at the number of support incidents that get created 
 - https://docs.confluent.io/platform/current/kafka-rest/api.html#configs-v3
 - https://docs.confluent.io/platform/current/kafka-rest/api.html#topic-v3
 - https://docs.confluent.io/platform/current/kafka-rest/api.html#accesslists
+
+
+
 
 
 
@@ -344,9 +428,6 @@ curl -sS http://localhost:8082/v3/clusters/ZWe3nnZwTrKSM0aM2doAxQ/brokers/1/conf
 
    
 curl -sS http://localhost:8082/v3/clusters/ZWe3nnZwTrKSM0aM2doAxQ/brokers/1/configs | jq -r '.data[] | select(.is_default == false).name'
-
-
-
 
 
 useful example, in particular for mac brew users:
