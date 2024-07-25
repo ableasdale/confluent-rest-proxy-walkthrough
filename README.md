@@ -177,7 +177,7 @@ However some of our records are between 1.2MB and 1.3MB in size.  As such, we've
 So we've agreed that we're going to increase this setting by a further `524294` bytes, giving us a new total of `1572882`; let's construct a payload to make that change. We need a few things for this:
 
 1. It's an HTTP `PUT` request
-2. The endpoint will be http://localhost:8082/v3/clusters/ZWe3nnZwTrKSM0aM2doAxQ/brokers/1/configs/message.max.bytes
+2. The endpoint will be `http://localhost:8082/v3/clusters/ZWe3nnZwTrKSM0aM2doAxQ/brokers/1/configs/message.max.bytes`
 3. We're sending a JSON payload, so we'll use the `Content-Type: application/json` header
 
 Our request body will contain the modified value:
@@ -283,7 +283,12 @@ And to view the configuration after having created the topic:
 curl -sS http://localhost:8082/v3/clusters/ZWe3nnZwTrKSM0aM2doAxQ/topics/test-topic3/configs | jq
 ```
 
-curl -sS http://localhost:8082/v3/clusters/ZWe3nnZwTrKSM0aM2doAxQ/topics/test-topic3/configs
+And as before, we can get a list of configuration names for the topic:
+
+```bash
+curl -sS http://localhost:8082/v3/clusters/ZWe3nnZwTrKSM0aM2doAxQ/topics/test-topic3/configs | jq -r ".data[].name"
+```
+
 
 ### Create multiple topics
 
@@ -318,6 +323,14 @@ curl -sS http://localhost:8082/v3/clusters/ZWe3nnZwTrKSM0aM2doAxQ/topics | jq -r
 ```
 
 Hopefully this gives you some ideas around how you can use ReST Proxy to manage topics.  As a note, you can also do the same work with ACLs - and we can review how these are handled in a future session if there is interest in doing so.
+
+## Listing Topic Partitions
+
+We can review partition data by running:
+
+```bash
+curl -sS "http://localhost:8082/v3/clusters/ZWe3nnZwTrKSM0aM2doAxQ/topics/test-topic/partitions" | jq
+```
 
 ## Producing to a topic
 
@@ -376,19 +389,21 @@ Fail faster with `-m nn`:
 curl -sS -m 5 -X POST -H "Content-Type: application/json" --data '{"value": {"type": "JSON", "data": {"one": "two", "three": "four"}}}' "http://localhost:8082/v3/clusters/ZWe3nnZwTrKSM0aM2doAxQ/topics/test-topic/records" | jq -r ". | select(.error_code == 200 | not)"
 ```
 
-That's just producing single records though - the main advantage of the `/records` endpoint is that it allows you to stream records to it.
+That's just producing single records though - the main advantage of the `/records` endpoint is that it allows you to stream records to it.  And this endpoint allows you to do this.  
 
+However, cURL doesn't allow us to demo this easily, unfortunately, so we'll need to set up a demo using something like the Java HTTP Client - and to do this, we would use the `"Transfer-Encoding: chunked"` header.  This could be something for a future session.
 
+As a note: you can pass in the header for streaming mode like this:
 
-
-
-curl -sS http://localhost:8082/v3/clusters/ZWe3nnZwTrKSM0aM2doAxQ/topics | jq -r ".data[].error_code"
-
-
--r ".data[] | select(.replication_factor == 1).topic_name"
-v2
-
+```bash
+curl -sS -H "Transfer-Encoding: chunked" --data @file http://example.com
 ```
+
+### Producing data using the `/v2/` endpoint
+
+We can use the v2 endpoint to send batches using cURL - in this example, we're sending 3 messages to a topic called `testtopic`:
+
+```bash
 curl -X POST \
      -H "Content-Type: application/vnd.kafka.json.v2+json" \
      -H "Accept: application/vnd.kafka.v2+json" \
@@ -400,28 +415,153 @@ curl -X POST \
      "http://localhost:8082/topics/testtopic" | jq .
 ```
 
+The response will give us an Array containing offset information for each Record produced.
+
+## Consumer Groups
+
+Let's start by listing Consumer Groups:
+
+```bash
+curl -sS  http://localhost:8082/v3/clusters/ZWe3nnZwTrKSM0aM2doAxQ/consumer-groups | jq
+```
+
+Note that Consumer Groups will be cleaned up if inactivity exceeds `consumer.instance.timeout.ms` (5 min default)
+
+For now this will return an empty set.
+
+TODO - get a Consumer Group
+GET /clusters/ZWe3nnZwTrKSM0aM2doAxQ/consumer-groups/{consumer_group_id}
+
+TODO - get consumers of a consumer group
+GET /clusters/ZWe3nnZwTrKSM0aM2doAxQ/consumer-groups/{consumer_group_id}
+
+TODO - get Consumer lag
+GET /clusters/ZWe3nnZwTrKSM0aM2doAxQ/consumer-groups/{consumer_group_id}/lag-summary
+
+TODO - get Assignments
+GET /clusters/ZWe3nnZwTrKSM0aM2doAxQ/consumer-groups/{consumer_group_id}/consumers/{consumer_id}/assignments HTTP/1.1
+Host: example.com
+
+## Consuming from a topic
+
+Now the first point of note is that there is a `v3` Consumer API planned - however as yet, it's not documented and there are no specifics that we can share at this point.  So for this section, we will use the `v2` endpoints to demonstrate the Consumer API from the ReST Proxy.
+
+This is a three stage process
+
+- Header `"Content-Type: application/vnd.kafka.v2+json"`
+- Consumer Group: `"consumer_group_1"`
+- Consumer Instance (the Consumer) `"consumer_instance_1"`
+
+The initial payload will create the Consumer Instance and provide some standard information (such as `"auto.offset.reset"` and the data format and so on):  
+
+```json
+{   
+    "name": "consumer_instance_1", 
+    "format": "json", 
+    "auto.offset.reset": "earliest"
+}
+```
+
+### Step One: Register
+
+We initiate an HTTP POST to `/consumers/{groupname}`
+
+```bash
+curl -sS -X POST -H "Content-Type: application/vnd.kafka.v2+json" --data '{"name": "my_consumer", "format": "binary", "auto.offset.reset": "earliest", "auto.commit.enable": "false"}' http://localhost:8082/consumers/consumer_group | jq
+```
+
+Returns some JSON
+
+
+OLDER: Let's register our Consumer Instance and associate it with a Consumer Group:
+
+```bash
+curl -sS -X POST -H "Content-Type: application/vnd.kafka.v2+json" --data '{"name": "consumer_instance", "format": "json", "auto.offset.reset": "earliest"}' http://localhost:8082/consumers/consumer_group | jq
+```
+
+We will see a JSON response:
+
+```json
+{
+  "instance_id": "consumer_instance",
+  "base_uri": "http://localhost:8082/consumers/consumer_group/instances/consumer_instance"
+}
+```
+
+### Step Two: Subscribe
+
+curl -sS -X POST -H "Content-Type: application/vnd.kafka.v2+json" --data '{"topics":["topic_a"]}' http://localhost:8082/consumers/consumer_group/instances/my_consumer/subscription | jq
+
+Not sure whether this worked ^
+
+
+OLDER:
+
+```bash
+curl -sS -X POST -H "Content-Type: application/vnd.kafka.v2+json" --data '{"topics":["test-topic"]}' http://localhost:8082/consumers/consumer_group/instances/consumer_instance/subscription | jq
+```
+
+curl -sS -X POST -H "Content-Type: application/vnd.kafka.v2+json" --data '{"topics":["topic_a"]}' http://localhost:8082/consumers/consumer_group/instances/consumer_instance/subscription | jq
+
+
+This step will return an `HTTP 204 (No Content)`; so if you see nothing, you know that the call has worked successfully.  If I were to modify the URL to subscribe a consumer instance with a different name, I'll see ReST Proxy returning an `HTTP 404` and some JSON:
+
+```json
+{
+  "error_code": 40403,
+  "message": "Consumer instance not found."
+}
+```
+
+### Step Three: `GET` Records
+
+TODO - There are still some issues with getting the Consumer group pieces working...
+
+```bash
+curl -sS -X GET -H "Accept: application/vnd.kafka.json.v2+json" http://localhost:8082/consumers/consumer_group/instances/consumer_instance/records
+```
+
+```bash
+curl -X GET \
+     -H "Accept: application/vnd.kafka.json.v2+json" \
+     http://localhost:8082/consumers/consumer_group/instances/consumer_instance/records | jq .
+```
 
 
 ## Further reading
 
-- https://docs.confluent.io/platform/current/kafka-rest/api.html#records-v3
-- https://docs.confluent.io/platform/current/kafka-rest/api.html#configs-v3
-- https://docs.confluent.io/platform/current/kafka-rest/api.html#topic-v3
-- https://docs.confluent.io/platform/current/kafka-rest/api.html#accesslists
+- <https://docs.confluent.io/platform/current/kafka-rest/api.html#records-v3>
+- <https://docs.confluent.io/platform/current/kafka-rest/api.html#configs-v3>
+- <https://docs.confluent.io/platform/current/kafka-rest/api.html#topic-v3>
+- <https://docs.confluent.io/platform/current/kafka-rest/api.html#partition-v3>
+- <https://docs.confluent.io/platform/current/kafka-rest/api.html#accesslists>
+- <https://docs.confluent.io/platform/current/kafka-rest/api.html#content-types>
 
-
-
-
-
-
-
-------------------- 
+------------------- TO DELETE BELOW
 
 curl -sS http://localhost:8082/v3/clusters/ZWe3nnZwTrKSM0aM2doAxQ/brokers/configs/message.max.bytes | jq
 
 ```bash
 curl -X PUT -H "Content-Type: application/json" -H "Accept: application/json" --data '{"value": "1572882"}' "http://localhost:8082/v3/clusters/ZWe3nnZwTrKSM0aM2doAxQ/brokers/1/configs/message.max.bytes"
 ```
+
+curl -X POST \
+     -H "Content-Type: application/vnd.kafka.json.v2+json" \
+     -H "Accept: application/vnd.kafka.v2+json" \
+     --data '{"records":[
+{"key":"alice","value":{"count":0}},
+{"key":"alice","value":{"count":1}},
+{"key":"alice","value":{"count":2}}
+]}' \
+     "http://localhost:8082/topics/test-topic" | jq .
+
+
+
+curl -sS http://localhost:8082/v3/clusters/ZWe3nnZwTrKSM0aM2doAxQ/topics | jq -r ".data[].error_code"
+
+
+-r ".data[] | select(.replication_factor == 1).topic_name"
+
 
 curl -sS http://localhost:8082/v3/clusters/ZWe3nnZwTrKSM0aM2doAxQ/brokers/1/configs | jq -r 'map(
   select(.is_default | not) | .value) | unique | .[]'
